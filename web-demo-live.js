@@ -1,4 +1,3 @@
-
 // web-demo-live.js
 // Browser mic <-> Deepgram Agent bridge (NO Twilio).
 // PCM16 @ 16k, 20ms framing, preroll flush, transcript forwarding.
