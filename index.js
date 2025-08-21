@@ -5,26 +5,25 @@ const http = require('http');
 
 const { handleTwilioCall } = require('./lib/twilioHandler');
 const { setupAudioStream } = require('./lib/audio-stream');
-const { setupWebDemoLive } = require('./web-demo-live'); // <- same web demo bridge
+const { setupWebDemoLive } = require('./web-demo-live'); // browser-only Deepgram bridge
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Twilio Voice webhook: returns TwiML that starts the Media Stream
-app.post('/twilio/voice', handleTwilioCall);
-
 // Health
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
-// ----- Single HTTP server (Render exposes one $PORT) -----
+// Twilio Voice webhook: returns TwiML that starts the Media Stream
+app.post('/twilio/voice', handleTwilioCall);
+
+// ONE HTTP server (Render exposes one $PORT)
 const server = http.createServer(app);
 
-// 1) Twilio <-> Deepgram bridge WS (path comes from your audio-stream module / env)
+// 1) Twilio <-> Deepgram audio stream (reuses this HTTP server)
 setupAudioStream(server);
 
-// 2) Browser-only web demo WS on the SAME server (no Twilio)
-//    Mounted at /web-demo/ws so it coexists cleanly.
+// 2) Browser-only demo WS (no Twilio). Mounted at /web-demo/ws.
 setupWebDemoLive(server, { route: '/web-demo/ws' });
 
 const PORT = parseInt(process.env.PORT || '5002', 10);

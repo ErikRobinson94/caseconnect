@@ -3,16 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 
-// Resolve the WS base dynamically so it works locally and on Render.
-// If NEXT_PUBLIC_WS_URL is set, we use it (e.g., wss://api.onrender.com/web-demo/ws).
-// Otherwise we derive from the current host (e.g., ws://localhost:5002/web-demo/ws).
-function getWSBase(): string {
-  const env = process.env.NEXT_PUBLIC_WS_URL; // baked at build time if provided
-  if (env && typeof env === "string" && env.length) return env;
-
-  if (typeof window === "undefined") return ""; // SSR safeguard; computed on client
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/web-demo/ws`;
+// Resolve WS base:
+// - In production set NEXT_PUBLIC_WS_BASE to e.g. "wss://YOUR-API.onrender.com/web-demo/ws"
+// - Locally falls back to current origin or localhost:5055
+function resolveWsBase(): string {
+  const env = process.env.NEXT_PUBLIC_WS_BASE;
+  if (env && env.length) return env; // should include the full ws(s)://.../web-demo/ws
+  if (typeof window !== "undefined") {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${location.host}/web-demo/ws`;
+  }
+  return "ws://localhost:5055/web-demo/ws";
 }
 
 type Voice = { id: number; name: string; src: string; scale?: string };
@@ -20,15 +21,7 @@ type Msg = { role: "User" | "Agent" | "System"; text: string; id: string };
 type Payload =
   | { type: "transcript"; role: "User" | "Agent"; text: string; partial?: boolean }
   | { type: "status"; text: string }
-  | {
-      type: "settings";
-      sttModel: string;
-      ttsVoice: string;
-      llmModel: string;
-      temperature: number;
-      greeting: string;
-      prompt_len: number;
-    };
+  | { type: "settings"; sttModel: string; ttsVoice: string; llmModel: string; temperature: number; greeting: string; prompt_len: number };
 
 const VOICES: Voice[] = [
   { id: 1, name: "Voice 1", src: "/images/voice-m1.png", scale: "scale-[1.12]" },
@@ -81,11 +74,7 @@ export default function Home() {
     if (audioCtxRef.current) return audioCtxRef.current;
     const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
     const ctx: AudioContext = new Ctx();
-    if (ctx.state === "suspended") {
-      try {
-        await ctx.resume();
-      } catch {}
-    }
+    if (ctx.state === "suspended") { try { await ctx.resume(); } catch {} }
     audioCtxRef.current = ctx;
     return ctx;
   }
@@ -93,13 +82,12 @@ export default function Home() {
   async function startDemo() {
     try {
       setTranscript([]);
-      setPartialAgent("");
-      setPartialUser("");
+      setPartialAgent(""); setPartialUser("");
       setStatus("connecting");
 
-      // WS — pass avatar choice in query
-      const base = getWSBase();
-      const url = `${base}${base.includes("?") ? "&" : "?"}voiceId=${selected}`;
+      // WS — pass avatar choice in query (voiceId)
+      const WS_BASE = resolveWsBase();
+      const url = WS_BASE.includes("?") ? `${WS_BASE}&voiceId=${selected}` : `${WS_BASE}?voiceId=${selected}`;
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
@@ -134,7 +122,7 @@ export default function Home() {
             } else {
               if (role === "Agent") setPartialAgent("");
               else setPartialUser("");
-              addMsg(role, text); // append final
+              addMsg(role, text); // append final message to history
             }
             return;
           }
@@ -174,8 +162,7 @@ export default function Home() {
       micWorkletRef.current = micNode;
 
       // keep mic graph connected but silent
-      const silence = ctx.createGain();
-      silence.gain.value = 0;
+      const silence = ctx.createGain(); silence.gain.value = 0;
       micNode.connect(silence).connect(ctx.destination);
 
       micNode.port.onmessage = (e) => {
@@ -190,22 +177,12 @@ export default function Home() {
   }
 
   function stopDemo() {
-    try {
-      wsRef.current?.close();
-    } catch {}
+    try { wsRef.current?.close(); } catch {}
     wsRef.current = null;
-    try {
-      micWorkletRef.current?.port?.close?.();
-    } catch {}
-    try {
-      playerWorkletRef.current?.disconnect();
-    } catch {}
-    try {
-      sourceRef.current?.disconnect();
-    } catch {}
-    try {
-      audioCtxRef.current?.close();
-    } catch {}
+    try { micWorkletRef.current?.port?.close?.(); } catch {}
+    try { playerWorkletRef.current?.disconnect(); } catch {}
+    try { sourceRef.current?.disconnect(); } catch {}
+    try { audioCtxRef.current?.close(); } catch {}
     micWorkletRef.current = null;
     playerWorkletRef.current = null;
     sourceRef.current = null;
@@ -312,7 +289,7 @@ export default function Home() {
                 </div>
               ))}
 
-              {/* live partials */}
+              {/* live partials (don't overwrite history) */}
               {partialAgent && (
                 <div className="rounded-2xl px-3 py-2 text-sm w-fit max-w-[90%] bg-zinc-800/40 text-white italic">
                   <span className="font-medium">Agent:</span> {partialAgent}
