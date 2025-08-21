@@ -1,60 +1,71 @@
-// public/worklets/pcm-processor.js
-// Mic frames -> PCM16 @ 16k, 20 ms. Sends ArrayBuffer via port.
-
-class PcmProcessor extends AudioWorkletProcessor {
+// Encodes mic to PCM16 @16k in 20ms frames (640 bytes)
+class PCMEncoderProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.inRate = sampleRate; // ctx rate, usually 48000
-    this.outRate = 16000;
-    this.buffer = [];
-    this.accum = [];
-    this.ratio = this.inRate / this.outRate;
-    this.cursor = 0;
-    this.samplesPerFrame = Math.round(0.02 * this.outRate); // 20ms -> 320 samples @ 16k
+    this._buf = new Float32Array(0);     // float audio at ctx rate
+    this._targetRate = 16000;
+    this._ratio = sampleRate / this._targetRate;
+    this._carry = 0;                      // fractional read position
+    this._outBuf = new Float32Array(0);   // resampled @16k
   }
 
-  process(inputs) {
-    const input = inputs[0];
-    if (!input || !input[0] || !input[0].length) return true;
-    const chan = input[0];
+  _appendFloat(a, b) {
+    const out = new Float32Array(a.length + b.length);
+    out.set(a, 0); out.set(b, a.length);
+    return out;
+  }
 
-    // Resample to 16k (linear)
-    for (let i = 0; i < chan.length; i++) {
-      this.accum.push(chan[i]);
+  _resampleTo16k() {
+    if (!this._buf.length) return;
+    const inBuf = this._buf;
+    const outLen = Math.floor((inBuf.length - 1 - this._carry) / this._ratio);
+    if (outLen <= 0) return;
+
+    const out = new Float32Array(outLen);
+    let pos = this._carry;
+    for (let i = 0; i < outLen; i++) {
+      const idx = Math.floor(pos);
+      const frac = pos - idx;
+      const s0 = inBuf[idx];
+      const s1 = inBuf[idx + 1] ?? s0;
+      out[i] = s0 + (s1 - s0) * frac;
+      pos += this._ratio;
     }
+    this._carry = pos % 1;
 
-    // Downsample using linear interpolation
-    const out = [];
-    let pos = this.cursor;
-    const step = this.ratio;
-    while (pos < this.accum.length) {
-      const i0 = Math.floor(pos);
-      const frac = pos - i0;
-      const s0 = this.accum[i0] ?? this.accum[this.accum.length - 1] ?? 0;
-      const s1 = this.accum[i0 + 1] ?? s0;
-      out.push(s0 + (s1 - s0) * frac);
-      pos += step;
-    }
-    // Keep leftover source samples
-    const keepFrom = Math.max(0, Math.floor(pos));
-    this.accum = this.accum.slice(keepFrom);
-    this.cursor = pos - keepFrom;
+    // keep the unread tail in _buf
+    const consumed = Math.floor(pos);
+    this._buf = inBuf.subarray(consumed);
 
-    // Chunk to 20ms frames and send as Int16
-    while (out.length >= this.samplesPerFrame) {
-      const frame = out.splice(0, this.samplesPerFrame);
+    // append to accumulated 16k stream
+    this._outBuf = this._appendFloat(this._outBuf, out);
+  }
+
+  _flushFrames() {
+    const SAMPLES_PER_FRAME = 320; // 20ms @16k
+    while (this._outBuf.length >= SAMPLES_PER_FRAME) {
+      const frame = this._outBuf.subarray(0, SAMPLES_PER_FRAME);
+      this._outBuf = this._outBuf.subarray(SAMPLES_PER_FRAME);
+
+      // float32 -> int16 little-endian
       const pcm16 = new Int16Array(frame.length);
       for (let i = 0; i < frame.length; i++) {
-        let s = frame[i];
-        if (s > 1) s = 1;
-        if (s < -1) s = -1;
-        pcm16[i] = s * 0x7fff;
+        let s = Math.max(-1, Math.min(1, frame[i]));
+        pcm16[i] = (s < 0 ? s * 0x8000 : s * 0x7fff) | 0;
       }
       this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
     }
-
-    return true;
   }
-}
 
-registerProcessor('pcm-processor', PcmProcessor);
+  process(inputs) {
+    const ch0 = inputs[0] && inputs[0][0];
+    if (ch0 && ch0.length) {
+      // append fresh mic samples at ctx sampleRate
+      this._buf = this._appendFloat(this._buf, ch0);
+      this._resampleTo16k();
+      this._flushFrames();
+    }
+    return true;
+    }
+}
+registerProcessor('pcm-processor', PCMEncoderProcessor);
