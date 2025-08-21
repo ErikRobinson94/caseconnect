@@ -3,19 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 
-// Resolve WS base:
-// - In production set NEXT_PUBLIC_WS_BASE to e.g. "wss://YOUR-API.onrender.com/web-demo/ws"
-// - Locally falls back to current origin or localhost:5055
-function resolveWsBase(): string {
-  const env = process.env.NEXT_PUBLIC_WS_BASE;
-  if (env && env.length) return env; // should include the full ws(s)://.../web-demo/ws
-  if (typeof window !== "undefined") {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${location.host}/web-demo/ws`;
-  }
-  return "ws://localhost:5055/web-demo/ws";
-}
-
 type Voice = { id: number; name: string; src: string; scale?: string };
 type Msg = { role: "User" | "Agent" | "System"; text: string; id: string };
 type Payload =
@@ -45,6 +32,24 @@ function resampleFloat(input: Float32Array, inRate: number, outRate: number): Fl
     pos += step;
   }
   return out;
+}
+
+// Build WS base so it works on Render and locally.
+// You can override with NEXT_PUBLIC_WS_BASE if needed.
+function getWSBase(): string {
+  const env = process.env.NEXT_PUBLIC_WS_BASE;
+  if (env && typeof env === "string") {
+    // allow http(s) and convert to ws(s)
+    if (env.startsWith("http://")) return env.replace("http://", "ws://");
+    if (env.startsWith("https://")) return env.replace("https://", "wss://");
+    return env; // already ws:// or wss://
+  }
+  if (typeof window !== "undefined") {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${location.host}/web-demo/ws`;
+  }
+  // SSR no-op (this is a client component anyway)
+  return "";
 }
 
 export default function Home() {
@@ -85,9 +90,9 @@ export default function Home() {
       setPartialAgent(""); setPartialUser("");
       setStatus("connecting");
 
-      // WS — pass avatar choice in query (voiceId)
-      const WS_BASE = resolveWsBase();
-      const url = WS_BASE.includes("?") ? `${WS_BASE}&voiceId=${selected}` : `${WS_BASE}?voiceId=${selected}`;
+      // WS — pass avatar choice in query
+      const WS_BASE = getWSBase();
+      const url = `${WS_BASE}?voiceId=${selected}`;
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
@@ -122,7 +127,7 @@ export default function Home() {
             } else {
               if (role === "Agent") setPartialAgent("");
               else setPartialUser("");
-              addMsg(role, text); // append final message to history
+              addMsg(role, text); // append final
             }
             return;
           }
@@ -289,7 +294,7 @@ export default function Home() {
                 </div>
               ))}
 
-              {/* live partials (don't overwrite history) */}
+              {/* live partials (do not replace history) */}
               {partialAgent && (
                 <div className="rounded-2xl px-3 py-2 text-sm w-fit max-w-[90%] bg-zinc-800/40 text-white italic">
                   <span className="font-medium">Agent:</span> {partialAgent}
@@ -297,7 +302,7 @@ export default function Home() {
               )}
               {partialUser && (
                 <div className="rounded-2xl px-3 py-2 text-sm w-fit max-w-[90%] bg-amber-400/70 text-black ml-auto italic">
-                  <span className="font-medium">User:</span> {partialUser}
+                <span className="font-medium">User:</span> {partialUser}
                 </div>
               )}
 

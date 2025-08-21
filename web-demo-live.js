@@ -93,6 +93,7 @@ function setupWebDemoLive(server, { route = "/web-demo/ws" } = {}) {
       try {
         agentWS.send(JSON.stringify(settings));
         settingsSent = true;
+        // tell the UI exactly what we applied
         try {
           browserWS.send(JSON.stringify({
             type: "settings",
@@ -154,8 +155,11 @@ function setupWebDemoLive(server, { route = "/web-demo/ws" } = {}) {
 
           case "SettingsApplied":
             settingsApplied = true;
+            // flush preroll
             if (preFrames.length) {
-              try { for (const fr of preFrames) agentWS.send(fr); } catch {}
+              try {
+                for (const fr of preFrames) agentWS.send(fr);
+              } catch {}
               preFrames.length = 0;
             }
             break;
